@@ -19,6 +19,7 @@ local isScanning = false
 function Data:Initialize()
 	Data:RegisterEvent("GUILDBANKFRAME_OPENED", "EventHandler")
 	Data:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED", "EventHandler")
+	Data:RegisterEvent("GUILDBANKFRAME_CLOSED", "EventHandler")
 	Data:RegisterEvent("AUCTION_OWNED_LIST_UPDATE", "EventHandler")
 	TSMAPI:RegisterForBagChange(function(...) Data:GetBagData(...) end)
 	TSMAPI:RegisterForBankChange(function(...) Data:GetBankData(...) end)
@@ -82,43 +83,86 @@ local BANK_TYPE_PERSONAL = "personal"
 local BANK_TYPE_REALM = "realm"
 local BANK_TYPE_GUILD = "guild"
 
-local function GetCurrentBankType()
-	if GuildBankFrame and GuildBankFrame.IsPersonalBank then
-		return BANK_TYPE_PERSONAL
-	elseif GuildBankFrame and GuildBankFrame.IsRealmBank then
-		return BANK_TYPE_REALM
+-- Bank type state: set on OPENED, cleared on CLOSED (inspired by Bagnon's db.lua)
+local currentOpenBankType = nil
+
+local function DetectBankType()
+	local detectedPersonal = nil
+	local detectedRealm = nil
+
+	-- Primary: detect from JSON cache payload (same approach as Bagnon)
+	if HasJsonCacheData("BANK_PERMISSIONS_PAYLOAD", 0) then
+		local json = GetJsonCacheData("BANK_PERMISSIONS_PAYLOAD", 0)
+		if json then
+			local jsonObject = C_Serialize:FromJSON(json)
+			if jsonObject then
+				detectedPersonal = jsonObject.IsPersonalBank
+				detectedRealm = jsonObject.IsRealmBank
+			end
+		end
+	end
+
+	-- Fallback to first tab name only if JSON detection yielded nothing
+	if not detectedPersonal and not detectedRealm then
+		local numTabs = GetNumGuildBankTabs()
+		local firstTabName = numTabs > 0 and GetGuildBankTabInfo(1) or nil
+		detectedPersonal = (firstTabName == "Personal Bank")
+		detectedRealm = (firstTabName == "Realm Bank")
+	end
+
+	if detectedPersonal then
+		currentOpenBankType = BANK_TYPE_PERSONAL
+	elseif detectedRealm then
+		currentOpenBankType = BANK_TYPE_REALM
 	else
-		return BANK_TYPE_GUILD
+		currentOpenBankType = BANK_TYPE_GUILD
 	end
 end
 
--- Store the current bank type when opened (persists until next open)
-local currentOpenBankType = nil
+local function ClearBankType()
+	currentOpenBankType = nil
+end
 
 function Data:EventHandler(event, fire)
 	if isScanning then return end
+
+	-- Handle open/close immediately without throttling (like Bagnon)
+	if event == "GUILDBANKFRAME_OPENED" then
+		DetectBankType()
+
+		-- Query all accessible tabs to preload data (inspired by Bagnon)
+		local initialTab = GetCurrentGuildBankTab()
+		for tab = 1, GetNumGuildBankTabs() do
+			local name, icon, isViewable, canDeposit, numWithdrawals = GetGuildBankTabInfo(tab)
+			local canQuery = false
+			if currentOpenBankType == BANK_TYPE_GUILD then
+				canQuery = (numWithdrawals and numWithdrawals > 0) or IsGuildLeader(UnitName("player"))
+			else
+				canQuery = type(name) == "string"
+			end
+			if canQuery then
+				QueryGuildBankTab(tab)
+			end
+		end
+		QueryGuildBankTab(initialTab)
+		return
+	end
+
+	if event == "GUILDBANKFRAME_CLOSED" then
+		ClearBankType()
+		return
+	end
+
+	-- Throttle remaining events (GUILDBANKBAGSLOTS_CHANGED, AUCTION_OWNED_LIST_UPDATE)
 	if fire ~= "FIRE" then
 		Data:ThrottleEvent(event)
 	else
-		if event == "GUILDBANKFRAME_OPENED" then
-			-- Detect and store the bank type
-			currentOpenBankType = GetCurrentBankType()
-
-			-- Query all tabs of the gbank to ensure all tabs will be scanned.
-			local initialTab = GetCurrentGuildBankTab()
-			for tab = 1, GetNumGuildBankTabs() do
-				if select(5, GetGuildBankTabInfo(tab)) > 0 or IsGuildLeader(UnitName("player")) then
-					QueryGuildBankTab(tab)
-				end
-			end
-			QueryGuildBankTab(initialTab)
-		elseif event == "GUILDBANKBAGSLOTS_CHANGED" then
-			-- Route to the appropriate handler based on bank type
+		if event == "GUILDBANKBAGSLOTS_CHANGED" then
 			if currentOpenBankType == BANK_TYPE_PERSONAL then
 				Data:GetPersonalBankData()
 			elseif currentOpenBankType == BANK_TYPE_REALM then
 				Data:GetRealmBankData()
-			else
+			elseif currentOpenBankType == BANK_TYPE_GUILD then
 				Data:GetGuildBankData()
 			end
 		elseif event == "AUCTION_OWNED_LIST_UPDATE" then
@@ -161,13 +205,19 @@ local function ScanGuildBankSlots()
 	local numTabs = GetNumGuildBankTabs()
 	for tab = 1, numTabs do
 		local name, icon, isViewable, canDeposit, numWithdrawals = GetGuildBankTabInfo(tab)
-		-- Ascension WoW: For Personal/Realm banks, always scan (numWithdrawals check may not apply)
-		local canAccess = (numWithdrawals and numWithdrawals > 0) or IsGuildLeader(UnitName("player")) or (name == "Personal Bank") or (name == "Realm Bank")
+		local canAccess = false
+		if currentOpenBankType == BANK_TYPE_GUILD then
+			canAccess = (numWithdrawals and numWithdrawals > 0) or IsGuildLeader(UnitName("player"))
+		else
+			-- Ascension WoW: For Personal/Realm banks, always scan (numWithdrawals check may not apply)
+			canAccess = (numWithdrawals and numWithdrawals > 0) or IsGuildLeader(UnitName("player")) or (name == "Personal Bank") or (name == "Realm Bank")
+		end
 		if canAccess then
 			for slot = 1, MAX_GUILDBANK_SLOTS_PER_TAB or 98 do
-				local itemString = TSMAPI:GetItemString(GetGuildBankItemLink(tab, slot))
-				local baseItemString = TSMAPI:GetBaseItemString(GetGuildBankItemLink(tab, slot))
+				local link = GetGuildBankItemLink(tab, slot)
+				local itemString = TSMAPI:GetItemString(link)
 				if itemString then
+					local baseItemString = TSMAPI:GetBaseItemString(link)
 					local quantity = select(2, GetGuildBankItemInfo(tab, slot))
 					items[itemString] = (items[itemString] or 0) + quantity
 					if itemString ~= baseItemString then
@@ -193,15 +243,12 @@ function Data:GetGuildBankData()
 		TSM.guilds[TSM.CURRENT_GUILD].items[itemString] = quantity
 	end
 
-	if GuildBankFrame and GuildBankFrame:IsVisible() then
-		TSM.guilds[TSM.CURRENT_GUILD].lastUpdate = time()
-	end
+	TSM.guilds[TSM.CURRENT_GUILD].lastUpdate = time()
 	TSM.Sync:BroadcastUpdateRequest()
 end
 
 -- Ascension WoW: scan the personal bank (per character)
 function Data:GetPersonalBankData()
-	-- Initialize personal bank for current player if needed
 	if not TSM.personalBanks[TSM.CURRENT_PLAYER] then
 		TSM.personalBanks[TSM.CURRENT_PLAYER] = { items = {}, lastUpdate = 0 }
 	end
@@ -218,7 +265,6 @@ end
 
 -- Ascension WoW: scan the realm bank (shared across realm)
 function Data:GetRealmBankData()
-	-- Initialize realm bank if needed
 	if not TSM.realmBank.items then
 		TSM.realmBank.items = {}
 	end
@@ -229,9 +275,7 @@ function Data:GetRealmBankData()
 		TSM.realmBank.items[itemString] = quantity
 	end
 
-	if GuildBankFrame and GuildBankFrame:IsVisible() then
-		TSM.realmBank.lastUpdate = time()
-	end
+	TSM.realmBank.lastUpdate = time()
 	TSM.Sync:BroadcastUpdateRequest()
 end
 
@@ -303,7 +347,7 @@ do
 		end
 		tinsert(TSM.characters[player].mailInbox, index, data)
 	end
-	
+
 	local function RemoveInboxMail(player, index)
 		local playerMail = TSM.characters[player].mail
 		for _, itemData in ipairs(TSM.characters[player].mailInbox[index].items) do
@@ -324,7 +368,7 @@ do
 		end
 		tremove(TSM.characters[player].mailInbox, index)
 	end
-	
+
 	local function RemoveInboxMailItem(player, index, itemIndex)
 		local playerMail = TSM.characters[player].mail
 		local itemData = TSM.characters[player].mailInbox[index].items[itemIndex]
@@ -358,7 +402,7 @@ do
 		if not items then error() end
 		InsertInboxMail(player, 1, {items=items, index=nil})
 	end
-	
+
 	local function RemoveMailItem(index, itemIndex)
 		local link = GetInboxItemLink(index, itemIndex)
 		if not link then return end
@@ -378,8 +422,8 @@ do
 			end
 		end
 	end
-	
-	
+
+
 	local tmpBuyouts = {}
 	local function OnAuctionBid(listType, index, bidPlaced)
 		local link = GetAuctionItemLink(listType, index)
@@ -401,7 +445,7 @@ do
 			end
 		end
 	end
-	
+
 	local function OnAuctionCanceled(index)
 		local link = GetAuctionItemLink("owner", index)
 		local count = select(3, GetAuctionItemInfo("owner", index))
@@ -429,7 +473,7 @@ do
 		AddIncomingMail(altName, items)
 		tinsert(playersToUpdate, altName)
 	end
-	
+
 	local function OnTakeInboxItem(index, itemIndex)
 		for i = (itemIndex or 1), (itemIndex or ATTACHMENTS_MAX_RECEIVE) do
 			local link = GetInboxItemLink(index, i)
@@ -438,7 +482,7 @@ do
 			end
 		end
 	end
-	
+
 	local function OnReturnMail(index)
 		local sender = select(3, GetInboxHeaderInfo(index))
 		local items = {}
@@ -462,7 +506,7 @@ do
 		if numItems == totalItems then
 			wipe(player.mailInbox)
 		end
-		
+
 		local index = 1
 		for i=1, numItems do
 			local items = {}
@@ -485,7 +529,7 @@ do
 							temp[data.link] = temp[data.link] - data.count
 							if temp[data.link] == 0 then temp[data.link] = nil end
 						end
-						
+
 						if not next(temp) then
 							matchIndex = k
 							break
