@@ -206,12 +206,16 @@ local function ScanGuildBankSlots()
 	for tab = 1, numTabs do
 		local name, icon, isViewable, canDeposit, numWithdrawals = GetGuildBankTabInfo(tab)
 		local canAccess = false
+
 		if currentOpenBankType == BANK_TYPE_GUILD then
 			canAccess = (numWithdrawals and numWithdrawals > 0) or IsGuildLeader(UnitName("player"))
+		elseif currentOpenBankType == BANK_TYPE_PERSONAL or currentOpenBankType == BANK_TYPE_REALM then
+			-- For personal/realm banks, just detect string to support any tab names
+			canAccess = name and type(name) == "string"
 		else
-			-- Ascension WoW: For Personal/Realm banks, always scan (numWithdrawals check may not apply)
-			canAccess = (numWithdrawals and numWithdrawals > 0) or IsGuildLeader(UnitName("player")) or (name == "Personal Bank") or (name == "Realm Bank")
+			error("Unknown bank type: " .. currentOpenBankType)
 		end
+
 		if canAccess then
 			for slot = 1, MAX_GUILDBANK_SLOTS_PER_TAB or 98 do
 				local link = GetGuildBankItemLink(tab, slot)
