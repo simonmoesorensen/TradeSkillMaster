@@ -41,9 +41,9 @@ end
 
 function Util:GetItemPrices(operation, itemString, isResetScan)
 	local prices = {}
-	
+
 	prices.cost = GetItemPrice("crafting", itemString)
-	
+
 	prices.undercut = GetItemPrice(operation.undercut, itemString)
 	prices.minPrice = GetItemPrice(operation.minPrice, itemString)
 	prices.maxPrice = GetItemPrice(operation.maxPrice, itemString)
@@ -202,6 +202,11 @@ function Util:groupTree(grpInfo, src, all, ah)
 									end
 								end
 							end
+						elseif not all then
+							local bagQty = bagItems[itemString] or 0
+							if bagQty > maxPost then
+								newgrp[itemString] = (newgrp[itemString] or 0) + (maxPost - bagQty)
+							end
 						end
 					end
 				end
@@ -231,7 +236,7 @@ function Util:groupTree(grpInfo, src, all, ah)
 						local prices = TSM.Util:GetItemPrices(operation, itemString)
 						local marketValue = TSMAPI:GetItemValue(itemString, "DBMarket")
 						local currentMinPrice = TSMAPI:GetItemValue(itemString, "DBMinBuyout")
-	
+
 						-- Compare the prices
 						if prices.minPrice and prices.maxPrice and prices.normalPrice then
 							if marketValue and currentMinPrice then
