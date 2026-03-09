@@ -15,6 +15,7 @@ local private = {}
 TSMAPI:RegisterForTracing(private, "TSM_Accounting.Data_private")
 
 local SECONDS_PER_DAY = 24 * 60 * 60
+local EXPIRY_TIME = 365
 local TIME_BUCKET = 300 -- group sales/buys within 5 minutes together
 local REPAIR_COST, REPAIR_MONEY, COULD_REPAIR, CAN_REPAIR = 0, 0, false, ""
 local expired = AUCTION_EXPIRED_MAIL_SUBJECT:gsub("%%s", "")
@@ -123,12 +124,12 @@ function Data:Load()
 	private:LoadItemRecords(TSM.db.realm.csvBuys, "buys")
 	private:LoadItemRecords(TSM.db.realm.csvCancelled, "auctions", "Cancel")
 	private:LoadItemRecords(TSM.db.realm.csvExpired, "auctions", "Expire")
-	
+
 	-- Decode money records
 	TSM.money = {}
 	private:LoadMoneyRecords(TSM.db.realm.csvIncome, "income")
 	private:LoadMoneyRecords(TSM.db.realm.csvExpense, "expense")
-	
+
 	-- Decode the gold log
 	for player, data in pairs(TSM.db.realm.goldLog) do
 		if type(data) == "string" then
@@ -375,7 +376,7 @@ function Data:ScanCollectedMail(oFunc, attempt, index, subIndex)
 
 	if invoiceType == "seller" and buyer and buyer ~= "" then -- AH Sales
 		local daysLeft = select(7, GetInboxHeaderInfo(index))
-		local saleTime = (time() + (daysLeft - 30) * SECONDS_PER_DAY)
+		local saleTime = (time() + (daysLeft - EXPIRY_TIME) * SECONDS_PER_DAY)
 		local link = select(2, TSMAPI:GetSafeItemInfo(itemName))
 		local itemString = TSM.db.global.itemStrings[itemName] or TSMAPI:GetItemString(link)
 		local quantity = select(11, GetInboxInvoiceInfo(index)) or 1 -- WotLK doesn't provide quantity sold by default, Ascension does
@@ -545,19 +546,19 @@ function private:IsItemFiltered(itemString, filters)
 	name = name or TSM.items[itemString].name
 	rarity = rarity or 0
 	if not name then return true end
-	
+
 	if filters.name and not strfind(strlower(name), strlower(filters.name)) then
 		return true
 	end
-	
+
 	if filters.rarity and rarity ~= filters.rarity then
 		return true
 	end
-	
+
 	if not TSM.db.realm.displayGreys and rarity == 0 then
 		return true
 	end
-	
+
 	if filters.group then
 		local groupPath = TSMAPI:GetGroupPath(itemString)
 		if not groupPath or not strfind(groupPath, "^"..TSMAPI:StrEscape(filters.group)) then
@@ -644,7 +645,7 @@ end
 
 function private:GetItemSummaryData(filters, includeProfit)
 	local itemData = {}
-	
+
 	for itemString, data in pairs(TSM.items) do
 		if not private:IsItemFiltered(itemString, filters) then
 			local sellTotal, sellNum = 0, 0
@@ -869,18 +870,18 @@ function Data.GetSummaryData(filters)
 		monthTime = 0,
 		weekTime = 0,
 	}
-	
-	
+
+
 	local function ProcessSummaryItemData(itemData, resultTbl, itemString)
 		local itemTotal, itemNum = 0, 0
 		for _, record in ipairs(itemData) do
 			if not private:IsRecordFiltered(record, filters) then
 				local timeDiff = time() - record.time
-				
+
 				-- update local variables
 				itemNum = itemNum + record.quantity
 				itemTotal = itemTotal + record.copper * record.quantity
-				
+
 				-- update total data
 				resultTbl.total = resultTbl.total + record.copper * record.quantity
 				goldData.totalTime = max(goldData.totalTime, timeDiff)
@@ -896,7 +897,7 @@ function Data.GetSummaryData(filters)
 				end
 			end
 		end
-		
+
 		-- check if this is a top item by gold and/or quantity
 		if itemTotal > (resultTbl.topGold.copper or 0) then
 			resultTbl.topGold = {itemString=itemString, copper=itemTotal, itemID=TSMAPI:GetItemID(itemString)}
@@ -911,18 +912,18 @@ function Data.GetSummaryData(filters)
 			ProcessSummaryItemData(data.buys, goldData.buys, itemString)
 		end
 	end
-	
-	
+
+
 	local function ProcessSummaryMoneyData(moneyData, resultTbl)
 		local moneyKeyNum, moneyKeyGold = {}, {}
 		for _, record in ipairs(moneyData) do
 			if not private:IsRecordFiltered(record, filters) then
 				local timeDiff = time() - record.time
-				
+
 				-- update local variables
 				moneyKeyNum[record.key] = (moneyKeyNum[record.key] or 0) + 1
 				moneyKeyGold[record.key] = (moneyKeyGold[record.key] or 0) + record.copper
-				
+
 				-- update total data
 				resultTbl.total = resultTbl.total + record.copper
 				goldData.totalTime = max(goldData.totalTime, timeDiff)
@@ -952,16 +953,16 @@ function Data.GetSummaryData(filters)
 	ProcessSummaryMoneyData(TSM.money.income, goldData.income)
 	ProcessSummaryMoneyData(TSM.money.expense, goldData.expense)
 
-	
+
 	goldData.sales.topGold.link = goldData.sales.topGold.itemString and (select(2, TSMAPI:GetSafeItemInfo(goldData.sales.topGold.itemString)) or TSM.items[goldData.sales.topGold.itemString].name) or L["none"]
 	goldData.sales.topQuantity.link = goldData.sales.topQuantity.itemString and (select(2, TSMAPI:GetSafeItemInfo(goldData.sales.topQuantity.itemString)) or TSM.items[goldData.sales.topQuantity.itemString].name) or L["none"]
 	goldData.buys.topGold.link = goldData.buys.topGold.itemString and (select(2, TSMAPI:GetSafeItemInfo(goldData.buys.topGold.itemString)) or TSM.items[goldData.buys.topGold.itemString].name) or L["none"]
 	goldData.buys.topQuantity.link = goldData.buys.topQuantity.itemString and (select(2, TSMAPI:GetSafeItemInfo(goldData.buys.topQuantity.itemString)) or TSM.items[goldData.buys.topQuantity.itemString].name) or L["none"]
-	
+
 	goldData.profit.total = ((goldData.sales.total + goldData.income.total) - (goldData.buys.total + goldData.expense.total))
 	goldData.profit.month = ((goldData.sales.month + goldData.income.month) - (goldData.buys.month + goldData.expense.month))
 	goldData.profit.week = ((goldData.sales.week + goldData.income.week) - (goldData.buys.week + goldData.expense.week))
-	
+
 	if goldData.totalTime > (SECONDS_PER_DAY * 30) then
 		goldData.monthTime = SECONDS_PER_DAY * 30
 	end
@@ -979,7 +980,7 @@ function Data.GetItemDetailData(itemString)
 	if not TSM.items[itemString] then return end
 
 	local data = {activity={}, buys={players={}, price={}, num={}, avg={}}, sales={players={}, price={}, num={}, avg={}}, stData={}}
-	
+
 	local function ProcessItemActivity(itemData, resultTbl, activityType)
 		local totalPrice, totalNum = 0, 0
 		local monthPrice, monthNum = 0, 0
@@ -1001,26 +1002,26 @@ function Data.GetItemDetailData(itemString)
 				weekNum = weekNum + record.quantity
 			end
 		end
-		
+
 		resultTbl.price.total = totalPrice
 		resultTbl.price.month = monthPrice
 		resultTbl.price.week = weekPrice
-		
+
 		resultTbl.num.total = totalNum
 		resultTbl.num.month = monthNum
 		resultTbl.num.week = weekNum
-		
+
 		resultTbl.avg.total = totalNum > 0 and TSM:Round(totalPrice / totalNum) or 0
 		resultTbl.avg.month = monthNum > 0 and TSM:Round(monthPrice / monthNum) or 0
 		resultTbl.avg.week = weekNum > 0 and TSM:Round(weekPrice / weekNum) or 0
-		
+
 		if totalNum > 0 then
 			resultTbl.hasData = true
 		end
 	end
 	ProcessItemActivity(TSM.items[itemString].buys, data.buys, "Purchase")
 	ProcessItemActivity(TSM.items[itemString].sales, data.sales, "Sale")
-	
+
 	for _, stRecord in ipairs(data.activity) do
 		local activityType = stRecord.activityType
 		local record = stRecord.record
@@ -1067,7 +1068,7 @@ end
 
 function Data:PopulateDataCaches()
 	Data.playerListCache = {}
-	
+
 	for itemString, data in pairs(TSM.items) do
 		for _, record in ipairs(data.buys) do
 			Data.playerListCache[record.player] = record.player
@@ -1079,7 +1080,7 @@ function Data:PopulateDataCaches()
 			Data.playerListCache[record.player] = record.player
 		end
 	end
-	
+
 	for _, record in pairs(TSM.money.income) do
 		Data.playerListCache[record.player] = record.player
 	end
@@ -1091,7 +1092,7 @@ end
 function Data:RemoveOldData(daysOld)
 	local cutOffTime = time() - daysOld * SECONDS_PER_DAY
 	local numRecords, numItems = 0, 0
-	
+
 	for itemString, data in pairs(TSM.items) do
 		local numLeft = 0
 		for _, key in ipairs({"sales", "buys", "auctions"}) do
