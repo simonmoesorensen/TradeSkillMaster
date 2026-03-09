@@ -18,13 +18,40 @@ local ascensionBankType
 local fullMoves, splitMoves, bagState = {}, {}, {}
 local callbackMsg = {}
 
+local BANK_TYPE_PERSONAL = "personal"
+local BANK_TYPE_REALM = "realm"
+
 local function GetAscensionBankType()
-	if GuildBankFrame and GuildBankFrame.IsPersonalBank then
-		return "personal"
-	elseif GuildBankFrame and GuildBankFrame.IsRealmBank then
-		return "realm"
+	local detectedPersonal = nil
+	local detectedRealm = nil
+
+	-- Primary: detect from JSON cache payload (same approach as Bagnon)
+	if HasJsonCacheData("BANK_PERMISSIONS_PAYLOAD", 0) then
+		local json = GetJsonCacheData("BANK_PERMISSIONS_PAYLOAD", 0)
+		if json then
+			local jsonObject = C_Serialize:FromJSON(json)
+			if jsonObject then
+				detectedPersonal = jsonObject.IsPersonalBank
+				detectedRealm = jsonObject.IsRealmBank
+			end
+		end
 	end
-	return nil
+
+	-- Fallback to first tab name only if JSON detection yielded nothing
+	if not detectedPersonal and not detectedRealm then
+		local numTabs = GetNumGuildBankTabs()
+		local firstTabName = numTabs > 0 and GetGuildBankTabInfo(1) or nil
+		detectedPersonal = (firstTabName == "Personal Bank")
+		detectedRealm = (firstTabName == "Realm Bank")
+	end
+
+	if detectedPersonal then
+		return BANK_TYPE_PERSONAL
+	elseif detectedRealm then
+		return BANK_TYPE_REALM
+	else
+		return nil
+	end
 end
 
 -- this is a set of wrapper functions so that I can switch
