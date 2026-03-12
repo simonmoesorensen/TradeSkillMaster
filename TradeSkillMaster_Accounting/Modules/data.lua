@@ -17,6 +17,7 @@ TSMAPI:RegisterForTracing(private, "TSM_Accounting.Data_private")
 local SECONDS_PER_DAY = 24 * 60 * 60
 local EXPIRY_TIME = 365
 local TIME_BUCKET = 300 -- group sales/buys within 5 minutes together
+local COD_EXPIRY_TIME = 6/24 -- 6 hours
 local REPAIR_COST, REPAIR_MONEY, COULD_REPAIR, CAN_REPAIR = 0, 0, false, ""
 local expired = AUCTION_EXPIRED_MAIL_SUBJECT:gsub("%%s", "")
 local cancelled = AUCTION_REMOVED_MAIL_SUBJECT:gsub("%%s", "")
@@ -418,23 +419,19 @@ function Data:ScanCollectedMail(oFunc, attempt, index, subIndex)
 						stacks = stacks + 1
 					else
 						ignore = true
+						TSM:Printf("COD Buys - different item found, ignoring from accounting")
 					end
 				end
 			end
 
 			if total ~= 0 and not ignore and private:CanLootMailIndex(index) then
---				local copper = floor(codAmount / total + 0.5)
 				local daysLeft = select(7, GetInboxHeaderInfo(index))
-				local buyTime = (time() + (daysLeft - 3) * SECONDS_PER_DAY)
---				local maxStack = select(8, TSMAPI:GetSafeItemInfo(link))
-				Data:InsertItemBuyRecord(itemString, "COD", total, codAmount, sender, buyTime)
---[[				for i = 1, stacks do
-					local stackSize = (total >= maxStack) and maxStack or total
-					Data:InsertItemBuyRecord(itemString, "COD", stackSize, copper, sender, buyTime)
-					total = total - stackSize
-					if total <= 0 then break end
-				end
-]]			end
+				local buyTime = (time() + (daysLeft - COD_EXPIRY_TIME) * SECONDS_PER_DAY)
+
+				-- Normalize per stack price
+				local stackPrice = floor(codAmount / total + 0.5)
+				Data:InsertItemBuyRecord(itemString, "COD", total, stackPrice, sender, buyTime)
+			end
 		end
 	elseif money > 0 and invoiceType ~= "seller" and not strfind(subject, outbid) then
 		local str
