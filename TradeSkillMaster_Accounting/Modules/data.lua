@@ -377,6 +377,7 @@ function Data:ScanCollectedMail(oFunc, attempt, index, subIndex)
 
 	if invoiceType == "seller" and buyer and buyer ~= "" then -- AH Sales
 		local daysLeft = select(7, GetInboxHeaderInfo(index))
+		-- Offset is always 365 days for all items when selling
 		local saleTime = (time() + (daysLeft - EXPIRY_TIME) * SECONDS_PER_DAY)
 		local link = select(2, TSMAPI:GetSafeItemInfo(itemName))
 		local itemString = TSM.db.global.itemStrings[itemName] or TSMAPI:GetItemString(link)
@@ -407,7 +408,17 @@ function Data:ScanCollectedMail(oFunc, attempt, index, subIndex)
 
 			local copper = floor(bid / quantity + 0.5)
 			local daysLeft = select(7, GetInboxHeaderInfo(index))
-			local buyTime = (time() + (daysLeft - 30) * SECONDS_PER_DAY)
+
+			-- Set offset based on days left when buying. For Vanity items, days
+			-- left is 365. For other items, days left is 30.
+			if daysLeft > 30 then
+				-- Vanity items
+				offset = EXPIRY_TIME
+			else
+				-- Other items
+				offset = 30
+			end
+			local buyTime = (time() + (daysLeft - offset) * SECONDS_PER_DAY)
 			Data:InsertItemBuyRecord(itemString, "Auction", quantity, copper, buyer, buyTime)
 		end
 	elseif codAmount > 0 then -- COD Buys (only if all attachments are same item)
