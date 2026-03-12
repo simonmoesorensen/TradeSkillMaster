@@ -97,7 +97,7 @@ function private:LoadItemRecords(csvData, recordType, key)
 			TSM.cache[itemString] = {}
 		end
 	end
-	for itemString in ipairs(TSM.items) do
+	for itemString in pairs(TSM.items) do
 		sort(TSM.items[itemString][recordType], function(a, b) return (a.time or 0) < (b.time or 0) end)
 	end
 end
