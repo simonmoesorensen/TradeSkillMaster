@@ -385,6 +385,17 @@ function Data:ScanCollectedMail(oFunc, attempt, index, subIndex)
 			local copper = floor((bid - ahcut) / quantity + 0.5)
 			Data:InsertItemSaleRecord(itemString, "Auction", quantity, copper, buyer, saleTime)
 		end
+	elseif (string.find(subject, "COD Payment:") ~= nil) then -- COD Sales
+		local itemName = string.match(subject, "COD Payment: (.+) %((%d+)%)")
+		local quantity = string.match(subject, "COD Payment: .+ %((%d+)%)")
+		local daysLeft = select(7, GetInboxHeaderInfo(index))
+		local saleTime = (time() + (daysLeft - EXPIRY_TIME) * SECONDS_PER_DAY)
+		local link = select(2, TSMAPI:GetSafeItemInfo(itemName))
+		local itemString = TSM.db.global.itemStrings[itemName] or TSMAPI:GetItemString(link)
+		if itemString and private:CanLootMailIndex(index) then
+			local copper = floor(money / quantity + 0.5)
+			Data:InsertItemSaleRecord(itemString, "COD", quantity, copper, sender, saleTime)
+		end
 	elseif invoiceType == "buyer" and buyer and buyer ~= "" then -- AH Buys
 		local link = GetInboxItemLink(index, 1)
 		local itemString = TSMAPI:GetItemString(link)
